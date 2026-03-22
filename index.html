@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NYC Street Trees</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    #map { width: 100vw; height: 100vh; }
+
+    /* Loading overlay */
+    #loading {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(15, 23, 42, 0.92);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 10000; color: #e2e8f0;
+      font-size: 1.1rem; gap: 20px;
+      transition: opacity 0.5s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #loading h1 { font-size: 2rem; color: #4ade80; margin-bottom: 4px; }
+    #loading .subtitle { color: #94a3b8; font-size: 0.95rem; }
+    #progress-bar {
+      width: 320px; height: 8px; background: #1e293b;
+      border-radius: 4px; overflow: hidden;
+    }
+    #progress-fill {
+      height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e, #4ade80);
+      border-radius: 4px; transition: width 0.3s;
+    }
+    #progress-text { font-size: 0.85rem; color: #94a3b8; }
+
+    /* Control panel */
+    #panel {
+      position: fixed; top: 16px; right: 16px; z-index: 9000;
+      background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(12px);
+      border-radius: 12px; padding: 16px 20px;
+      color: #e2e8f0; min-width: 260px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      font-size: 0.88rem;
+      max-height: calc(100vh - 32px); overflow-y: auto;
+    }
+    #panel h2 { font-size: 1.15rem; margin-bottom: 8px; color: #4ade80; }
+    #panel .stat { display: flex; justify-content: space-between; padding: 3px 0; }
+    #panel .stat .label { color: #94a3b8; }
+    #panel .stat .value { color: #f1f5f9; font-weight: 600; }
+    #panel hr { border: none; border-top: 1px solid #334155; margin: 10px 0; }
+    #panel .section-title { color: #94a3b8; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+
+    /* Filter controls */
+    .filter-group { margin-bottom: 10px; }
+    .filter-group label { display: block; color: #94a3b8; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .filter-group select {
+      width: 100%; padding: 6px 8px; background: #1e293b; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: 6px; font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .filter-group select:focus { outline: none; border-color: #4ade80; }
+
+    /* Legend */
+    .legend-item {
+      display: flex; align-items: center; gap: 8px; padding: 2px 0;
+    }
+    .legend-dot {
+      width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+    }
+    .legend-label { font-size: 0.82rem; color: #cbd5e1; }
+
+    /* Tree popup */
+    .tree-popup { font-family: 'Segoe UI', system-ui, sans-serif; }
+    .tree-popup h3 { color: #166534; margin-bottom: 6px; font-size: 1.05rem; }
+    .tree-popup .latin { font-style: italic; color: #6b7280; font-size: 0.85rem; margin-bottom: 8px; }
+    .tree-popup .detail { display: flex; justify-content: space-between; padding: 3px 0; font-size: 0.88rem; }
+    .tree-popup .detail .lbl { color: #6b7280; }
+    .tree-popup .detail .val { font-weight: 600; color: #1e293b; }
+    .tree-popup .health-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 0.78rem; font-weight: 600; color: white;
+    }
+
+    /* Custom cluster styles */
+    .marker-cluster-small { background-color: rgba(34, 197, 94, 0.25); }
+    .marker-cluster-small div { background-color: rgba(34, 197, 94, 0.7); color: #fff; }
+    .marker-cluster-medium { background-color: rgba(250, 204, 21, 0.25); }
+    .marker-cluster-medium div { background-color: rgba(250, 204, 21, 0.7); color: #1e293b; }
+    .marker-cluster-large { background-color: rgba(239, 68, 68, 0.25); }
+    .marker-cluster-large div { background-color: rgba(239, 68, 68, 0.7); color: #fff; }
+
+    /* Toggle panel button */
+    #toggle-panel {
+      position: fixed; top: 16px; right: 16px; z-index: 9001;
+      background: rgba(15, 23, 42, 0.92); color: #4ade80;
+      border: 1px solid #334155; border-radius: 8px;
+      padding: 8px 12px; cursor: pointer; font-size: 1.1rem;
+      display: none;
+    }
+    #toggle-panel:hover { background: #1e293b; }
+
+    /* Search box */
+    #search-box {
+      width: 100%; padding: 6px 8px; background: #1e293b; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: 6px; font-size: 0.85rem;
+      margin-bottom: 10px;
+    }
+    #search-box::placeholder { color: #64748b; }
+    #search-box:focus { outline: none; border-color: #4ade80; }
+  </style>
+</head>
+<body>
+  <!-- Loading overlay -->
+  <div id="loading">
+    <h1>NYC Street Trees</h1>
+    <div class="subtitle">Loading 2015 Street Tree Census data...</div>
+    <div id="progress-bar"><div id="progress-fill"></div></div>
+    <div id="progress-text">Fetching trees...</div>
+  </div>
+
+  <!-- Toggle button for collapsed panel -->
+  <button id="toggle-panel" onclick="togglePanel()">&#x1f332;</button>
+
+  <!-- Info/filter panel -->
+  <div id="panel">
+    <h2>NYC Street Trees</h2>
+    <div class="subtitle" style="color:#94a3b8; font-size:0.8rem; margin-bottom:10px;">2015 Street Tree Census</div>
+
+    <div class="stat"><span class="label">Trees loaded</span><span class="value" id="tree-count">...</span></div>
+    <div class="stat"><span class="label">Species</span><span class="value" id="species-count">...</span></div>
+
+    <hr>
+
+    <div class="filter-group">
+      <label>Borough</label>
+      <select id="filter-borough" onchange="applyFilters()">
+        <option value="all">All Boroughs</option>
+        <option value="Manhattan">Manhattan</option>
+        <option value="Brooklyn">Brooklyn</option>
+        <option value="Queens">Queens</option>
+        <option value="Bronx">Bronx</option>
+        <option value="Staten Island">Staten Island</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label>Species</label>
+      <input type="text" id="search-box" placeholder="Search species..." oninput="filterSpeciesList()">
+      <select id="filter-species" onchange="applyFilters()" size="1">
+        <option value="all">All Species</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label>Health</label>
+      <select id="filter-health" onchange="applyFilters()">
+        <option value="all">All</option>
+        <option value="Good">Good</option>
+        <option value="Fair">Fair</option>
+        <option value="Poor">Poor</option>
+      </select>
+    </div>
+
+    <hr>
+    <div class="section-title">Health Legend</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div><span class="legend-label">Good</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background:#facc15"></div><span class="legend-label">Fair</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div><span class="legend-label">Poor</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div><span class="legend-label">Dead / Stump / Unknown</span></div>
+
+    <hr>
+    <div class="section-title">Top Species</div>
+    <div id="top-species"></div>
+
+    <hr>
+    <div style="font-size:0.75rem; color:#64748b; text-align:center; margin-top:4px;">
+      Data: NYC Open Data &middot; 2015 Street Tree Census<br>
+      <a href="https://data.cityofnewyork.us/Environment/2015-Street-Tree-Census-Tree-Data/uvpi-gqnh" target="_blank" style="color:#4ade80;">Dataset</a>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script>
+    // ── Map setup ──
+    const map = L.map('map', {
+      center: [40.7128, -74.006],
+      zoom: 11,
+      zoomControl: true,
+      preferCanvas: true
+    });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      subdomains: 'abcd',
+      maxZoom: 20
+    }).addTo(map);
+
+    // ── State ──
+    let allTrees = [];
+    let allSpeciesList = [];
+    const speciesCounts = {};
+    const clusterGroup = L.markerClusterGroup({
+      chunkedLoading: true,
+      maxClusterRadius: 50,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+      disableClusteringAtZoom: 17
+    });
+    map.addLayer(clusterGroup);
+
+    // ── Health colors ──
+    const healthColor = {
+      'Good': '#22c55e',
+      'Fair': '#facc15',
+      'Poor': '#ef4444'
+    };
+    const defaultColor = '#94a3b8';
+
+    function getColor(health) {
+      return healthColor[health] || defaultColor;
+    }
+
+    function healthBadgeBg(health) {
+      return healthColor[health] || '#64748b';
+    }
+
+    // ── Create circle marker for a tree ──
+    function makeMarker(t) {
+      const lat = parseFloat(t.latitude);
+      const lng = parseFloat(t.longitude);
+      if (isNaN(lat) || isNaN(lng)) return null;
+
+      const color = getColor(t.health);
+      const marker = L.circleMarker([lat, lng], {
+        radius: 4,
+        fillColor: color,
+        color: color,
+        weight: 1,
+        opacity: 0.8,
+        fillOpacity: 0.6
+      });
+
+      marker.bindPopup(() => {
+        const name = t.spc_common || 'Unknown';
+        const latin = t.spc_latin || '';
+        const health = t.health || 'Unknown';
+        const status = t.status || 'Unknown';
+        const dbh = t.tree_dbh || '?';
+        const addr = t.address || '';
+        const zip = t.zipcode || '';
+        const boro = t.boroname || '';
+
+        return `<div class="tree-popup">
+          <h3>${titleCase(name)}</h3>
+          ${latin ? `<div class="latin">${latin}</div>` : ''}
+          <div class="detail"><span class="lbl">Health</span><span class="val"><span class="health-badge" style="background:${healthBadgeBg(health)}">${health}</span></span></div>
+          <div class="detail"><span class="lbl">Status</span><span class="val">${status}</span></div>
+          <div class="detail"><span class="lbl">Diameter</span><span class="val">${dbh}"</span></div>
+          <div class="detail"><span class="lbl">Address</span><span class="val">${addr}</span></div>
+          <div class="detail"><span class="lbl">Zip</span><span class="val">${zip}</span></div>
+          <div class="detail"><span class="lbl">Borough</span><span class="val">${boro}</span></div>
+        </div>`;
+      }, { maxWidth: 280 });
+
+      return marker;
+    }
+
+    function titleCase(s) {
+      return s.replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    // ── Fetch data from NYC Open Data (Socrata API) ──
+    const API = 'https://data.cityofnewyork.us/resource/uvpi-gqnh.json';
+    const PAGE_SIZE = 50000;
+    const MAX_TREES = 200000; // Load a substantial sample for performance
+
+    async function fetchTrees() {
+      let offset = 0;
+      let total = 0;
+
+      while (offset < MAX_TREES) {
+        const url = `${API}?$limit=${PAGE_SIZE}&$offset=${offset}&$select=latitude,longitude,spc_common,spc_latin,health,status,tree_dbh,address,zipcode,boroname&$where=latitude IS NOT NULL`;
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          if (data.length === 0) break;
+
+          for (const t of data) {
+            allTrees.push(t);
+            const sp = (t.spc_common || 'unknown').toLowerCase();
+            speciesCounts[sp] = (speciesCounts[sp] || 0) + 1;
+          }
+
+          total += data.length;
+          const pct = Math.min(100, Math.round((total / MAX_TREES) * 100));
+          document.getElementById('progress-fill').style.width = pct + '%';
+          document.getElementById('progress-text').textContent = `${total.toLocaleString()} trees loaded...`;
+
+          offset += PAGE_SIZE;
+          if (data.length < PAGE_SIZE) break;
+        } catch (e) {
+          console.error('Fetch error:', e);
+          document.getElementById('progress-text').textContent = `Error: ${e.message}. Retrying...`;
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      // Build species list
+      allSpeciesList = Object.entries(speciesCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => ({ name, count }));
+
+      populateSpeciesSelect(allSpeciesList);
+      updateStats();
+      showTopSpecies();
+      applyFilters();
+
+      // Hide loading
+      document.getElementById('loading').classList.add('hidden');
+      setTimeout(() => document.getElementById('loading').style.display = 'none', 600);
+    }
+
+    function populateSpeciesSelect(list) {
+      const sel = document.getElementById('filter-species');
+      // Keep "All" option
+      sel.innerHTML = '<option value="all">All Species (' + allSpeciesList.length + ')</option>';
+      for (const sp of list) {
+        if (sp.name === 'unknown') continue;
+        const opt = document.createElement('option');
+        opt.value = sp.name;
+        opt.textContent = `${titleCase(sp.name)} (${sp.count.toLocaleString()})`;
+        sel.appendChild(opt);
+      }
+    }
+
+    function filterSpeciesList() {
+      const query = document.getElementById('search-box').value.toLowerCase();
+      const filtered = query
+        ? allSpeciesList.filter(sp => sp.name.includes(query))
+        : allSpeciesList;
+      populateSpeciesSelect(filtered);
+    }
+
+    function updateStats() {
+      document.getElementById('tree-count').textContent = allTrees.length.toLocaleString();
+      document.getElementById('species-count').textContent = allSpeciesList.filter(s => s.name !== 'unknown').length;
+    }
+
+    function showTopSpecies() {
+      const container = document.getElementById('top-species');
+      const top10 = allSpeciesList.filter(s => s.name !== 'unknown').slice(0, 10);
+      const maxCount = top10[0]?.count || 1;
+      container.innerHTML = top10.map(sp => `
+        <div style="margin-bottom:6px;">
+          <div style="display:flex; justify-content:space-between; font-size:0.82rem;">
+            <span style="color:#cbd5e1">${titleCase(sp.name)}</span>
+            <span style="color:#64748b">${sp.count.toLocaleString()}</span>
+          </div>
+          <div style="height:4px; background:#1e293b; border-radius:2px; margin-top:2px;">
+            <div style="height:100%; width:${(sp.count/maxCount*100).toFixed(1)}%; background:linear-gradient(90deg,#22c55e,#4ade80); border-radius:2px;"></div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // ── Filtering ──
+    function applyFilters() {
+      const borough = document.getElementById('filter-borough').value;
+      const species = document.getElementById('filter-species').value;
+      const health = document.getElementById('filter-health').value;
+
+      clusterGroup.clearLayers();
+      const markers = [];
+      let shown = 0;
+
+      for (const t of allTrees) {
+        if (borough !== 'all' && t.boroname !== borough) continue;
+        if (species !== 'all' && (t.spc_common || 'unknown').toLowerCase() !== species) continue;
+        if (health !== 'all' && t.health !== health) continue;
+
+        const m = makeMarker(t);
+        if (m) {
+          markers.push(m);
+          shown++;
+        }
+      }
+
+      clusterGroup.addLayers(markers);
+      document.getElementById('tree-count').textContent = shown.toLocaleString() + (shown < allTrees.length ? ` / ${allTrees.length.toLocaleString()}` : '');
+    }
+
+    // ── Panel toggle ──
+    function togglePanel() {
+      const panel = document.getElementById('panel');
+      const btn = document.getElementById('toggle-panel');
+      if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+        btn.style.display = 'none';
+      } else {
+        panel.style.display = 'none';
+        btn.style.display = 'block';
+      }
+    }
+
+    // Close panel on small screens
+    if (window.innerWidth < 768) {
+      document.getElementById('panel').style.display = 'none';
+      document.getElementById('toggle-panel').style.display = 'block';
+    }
+
+    // ── Start ──
+    fetchTrees();
+  </script>
+</body>
+</html>
